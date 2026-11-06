@@ -2,45 +2,53 @@ package storage
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"twitch-security/domain"
 )
 
 type SecurityTelemetryEvent struct {
-	EventID      string
-	AWSAccountID string
-	Microservice string
-	Payload      string
-	Timestamp    time.Time
-}
-
-type SecurityWorkflowPort interface {
-	ProcessAlert(ctx context.Context, vuln domain.Vulnerability) (*domain.AgentState, error)
+	EventID      string    `json:"event_id"`
+	AWSAccountID string    `json:"aws_account_id"`
+	Microservice string    `json:"microservice"`
+	Payload      string    `json:"payload"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 type TelemetryBuffer struct {
-	port SecurityWorkflowPort
+	mu         sync.Mutex
+	EventQueue []SecurityTelemetryEvent
+	Remediator domain.SecurityWorkflowPort
 }
 
-func NewTelemetryBuffer(port SecurityWorkflowPort) *TelemetryBuffer {
-	return &TelemetryBuffer{port: port}
+func NewTelemetryBuffer(rp domain.SecurityWorkflowPort) *TelemetryBuffer {
+	return &TelemetryBuffer{
+		EventQueue: make([]SecurityTelemetryEvent, 0),
+		Remediator: rp,
+	}
 }
 
 func (tb *TelemetryBuffer) IngestStream(ctx context.Context, event SecurityTelemetryEvent) {
-	if tb == nil || tb.port == nil {
+	if tb == nil {
 		return
 	}
 
-	vuln := domain.Vulnerability{
-		AlertID:      event.EventID,
-		AWSAccountID: event.AWSAccountID,
-		Microservice: event.Microservice,
-		Payload:      event.Payload,
-		Timestamp:    event.Timestamp,
+	tb.mu.Lock()
+	tb.EventQueue = append(tb.EventQueue, event)
+	tb.mu.Unlock()
+
+	if tb.Remediator == nil {
+		return
 	}
 
-	go func() {
-		_, _ = tb.port.ProcessAlert(ctx, vuln)
-	}()
+	if len(event.Payload) > 0 {
+		vuln := domain.Vulnerability{
+			ID:         event.EventID,
+			Service:    event.Microservice,
+			TargetFile: "go.mod",
+			Invariants: []string{"PRESERVE_MEDIA_INGESTION_FLOW"},
+		}
+		go tb.Remediator.ProcessAlert(ctx, vuln)
+	}
 }

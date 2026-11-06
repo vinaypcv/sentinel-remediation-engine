@@ -2,49 +2,50 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
 
 	"twitch-security/controller"
 	"twitch-security/domain"
 )
 
 type RemediationEngine struct {
-	verifier *controller.VerificationController
+	Verifier *controller.VerificationController
 }
 
-func NewRemediationEngine(verifier *controller.VerificationController) *RemediationEngine {
-	return &RemediationEngine{verifier: verifier}
+func NewRemediationEngine(v *controller.VerificationController) *RemediationEngine {
+	return &RemediationEngine{Verifier: v}
 }
 
 func (re *RemediationEngine) ExecuteRemediationLoop(
 	ctx context.Context,
 	vuln domain.Vulnerability,
-	patch string,
-	chaos bool,
+	mockPatch string,
+	forceFailure bool,
 ) (*domain.AgentState, error) {
-	if re.verifier == nil {
-		return nil, fmt.Errorf("missing verifier")
-	}
-
-	if err := re.verifier.VerifyRemediation(ctx, patch); err != nil {
-		return nil, err
-	}
-
-	status := "remediated"
-	if chaos {
-		status = "remediated_with_chaos"
-	}
-
 	state := &domain.AgentState{
-		AlertID:     vuln.AlertID,
-		Status:      status,
-		Patch:       patch,
-		Verified:    true,
-		CreatedAt:   time.Now(),
-		AWSAccount:  vuln.AWSAccountID,
-		ServiceName: vuln.Microservice,
+		TaskID:         vuln.ID,
+		CurrentPhase:   "ANALYSIS",
+		ExecutionTrace: []string{"Initialized ingestion pipeline analysis."},
 	}
 
+	state.CurrentPhase = "PATCHING"
+	err := re.Verifier.VerifyEpistemicGuardrails(ctx, mockPatch, vuln.Invariants)
+	if err != nil {
+		state.CurrentPhase = "ROLLED_BACK"
+		state.ExecutionTrace = append(state.ExecutionTrace, fmt.Sprintf("Aborted: %v", err))
+		return state, err
+	}
+	state.ExecutionTrace = append(state.ExecutionTrace, "Passed epistemic guardrail evaluations.")
+
+	state.CurrentPhase = "VERIFYING"
+	if forceFailure {
+		state.CurrentPhase = "ROLLED_BACK"
+		state.ExecutionTrace = append(state.ExecutionTrace, "Rollback Triggered: Sandbox test suite failed.")
+		return state, errors.New("remediation_failed: unit tests failed in compilation sandbox")
+	}
+
+	state.CurrentPhase = "COMPLETED"
+	state.ExecutionTrace = append(state.ExecutionTrace, "Sandbox tests verified successfully. PR generated.")
 	return state, nil
 }

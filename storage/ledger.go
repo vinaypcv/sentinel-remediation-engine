@@ -2,50 +2,68 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"twitch-security/domain"
 )
 
 type ImmutableLedger struct {
-	path string
-	mu   sync.Mutex
+	mu          sync.Mutex
+	LogFile     *os.File
+	TargetStore map[string]domain.AgentState
 }
 
-func NewImmutableLedger(path string) (*ImmutableLedger, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+func NewImmutableLedger(filepath string) (*ImmutableLedger, error) {
+	file, err := os.OpenFile(filepath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
 	if err != nil {
 		return nil, err
 	}
-	_ = f.Close()
-	return &ImmutableLedger{path: path}, nil
+	return &ImmutableLedger{
+		LogFile:     file,
+		TargetStore: make(map[string]domain.AgentState),
+	}, nil
 }
 
-func (l *ImmutableLedger) CommitStateToLedger(ctx context.Context, state *domain.AgentState) error {
-	_ = ctx
-	if state == nil {
+func (il *ImmutableLedger) Close() error {
+	if il == nil {
 		return nil
 	}
 
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return err
+	il.mu.Lock()
+	defer il.mu.Unlock()
+
+	if il.LogFile == nil {
+		return nil
+	}
+	err := il.LogFile.Close()
+	il.LogFile = nil
+	return err
+}
+
+func (il *ImmutableLedger) CommitStateToLedger(ctx context.Context, state *domain.AgentState) error {
+	_ = ctx
+
+	if il == nil || state == nil {
+		return nil
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	il.mu.Lock()
+	defer il.mu.Unlock()
 
-	w, err := os.OpenFile(l.path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer w.Close()
-
-	if _, err := w.Write(append(payload, '\n')); err != nil {
-		return err
+	if il.TargetStore != nil {
+		il.TargetStore[state.TaskID] = *state
 	}
 
-	return nil
+	logEntry := fmt.Sprintf("[%s] Task: %s | Phase: %s | TraceCount: %d\n",
+		time.Now().Format(time.RFC3339), state.TaskID, state.CurrentPhase, len(state.ExecutionTrace))
+
+	if il.LogFile == nil {
+		return fmt.Errorf("ledger_closed")
+	}
+
+	_, err := il.LogFile.WriteString(logEntry)
+	return err
 }

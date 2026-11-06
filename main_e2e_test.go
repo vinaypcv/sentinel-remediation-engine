@@ -13,7 +13,6 @@ import (
 	"twitch-security/workflow"
 )
 
-// MockWrapper adapts our engine to implement the driving SecurityWorkflowPort interface cleanly.
 type MockWrapper struct {
 	Engine *workflow.RemediationEngine
 	Ledger *storage.ImmutableLedger
@@ -31,20 +30,21 @@ func (mw *MockWrapper) ProcessAlert(ctx context.Context, vuln domain.Vulnerabili
 func TestEndToEnd_HolisticSecurityPipeline(t *testing.T) {
 	ctx := context.Background()
 	ledgerFile := "twitch_security_audit.log"
-	defer os.Remove(ledgerFile)
 
-	// 1. Initialize core system layers
 	vController := controller.NewVerificationController()
 	rEngine := workflow.NewRemediationEngine(vController)
 	ledger, err := storage.NewImmutableLedger(ledgerFile)
 	if err != nil {
 		t.Fatalf("Failed to spin up audit storage ledger: %v", err)
 	}
+	defer func() {
+		_ = ledger.Close()
+		_ = os.Remove(ledgerFile)
+	}()
 
 	wrapper := &MockWrapper{Engine: rEngine, Ledger: ledger}
 	buffer := storage.NewTelemetryBuffer(wrapper)
 
-	// 2. Simulate streaming cross-account telemetry from an isolated AWS bubble
 	telemetryAlert := storage.SecurityTelemetryEvent{
 		EventID:      "TX-7709",
 		AWSAccountID: "112233445566",
@@ -53,10 +53,8 @@ func TestEndToEnd_HolisticSecurityPipeline(t *testing.T) {
 		Timestamp:    time.Now(),
 	}
 
-	// 3. Stream event into buffer workspace
 	buffer.IngestStream(ctx, telemetryAlert)
 
-	// 4. Verify system state written to the immutable ledger (poll to avoid CI flakiness)
 	deadline := time.Now().Add(2 * time.Second)
 	var lastData string
 

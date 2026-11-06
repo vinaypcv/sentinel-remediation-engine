@@ -1,21 +1,26 @@
 package domain
 
-import "time"
+import "context"
 
+// Vulnerability represents an ingested security flaw or compliance risk.
 type Vulnerability struct {
-	AlertID      string `json:"alert_id"`
-	AWSAccountID string `json:"aws_account_id"`
-	Microservice string `json:"microservice"`
-	Payload      string `json:"payload"`
-	Timestamp    time.Time `json:"timestamp"`
+	ID          string   `json:"id"`
+	Service     string   `json:"service"`
+	TargetFile  string   `json:"target_file"`
+	RiskScore   float64  `json:"risk_score"`
+	Description string   `json:"description"`
+	Invariants  []string `json:"invariants"` // e.g., "PRESERVE_MEDIA_INGESTION_FLOW"
 }
 
+// AgentState tracks the cognitive lifecycle and rollback markers of the remediation engine.
 type AgentState struct {
-	AlertID     string    `json:"alert_id"`
-	Status      string    `json:"status"`
-	Patch       string    `json:"patch"`
-	Verified    bool      `json:"verified"`
-	CreatedAt   time.Time `json:"created_at"`
-	AWSAccount  string    `json:"aws_account_id"`
-	ServiceName string    `json:"microservice"`
+	TaskID         string   `json:"task_id"`
+	CurrentPhase   string   `json:"current_phase"` // "ANALYSIS", "PATCHING", "VERIFYING", "COMPLETED", "ROLLED_BACK"
+	Uncertainty    float64  `json:"uncertainty"`
+	ExecutionTrace []string `json:"execution_trace"`
+}
+
+// SecurityWorkflowPort dictates entrypoint behavior for inbound automated telemetry.
+type SecurityWorkflowPort interface {
+	ProcessAlert(ctx context.Context, vuln Vulnerability) (*AgentState, error)
 }

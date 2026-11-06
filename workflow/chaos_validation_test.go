@@ -8,16 +8,17 @@ import (
 	"twitch-security/domain"
 )
 
-func TestExecuteRemediationLoop_ChaosFlag(t *testing.T) {
+func TestExecuteRemediationLoop_ForceFailureRollsBack(t *testing.T) {
 	ctx := context.Background()
 	v := controller.NewVerificationController()
 	re := NewRemediationEngine(v)
 
-	state, err := re.ExecuteRemediationLoop(ctx, domain.Vulnerability{AlertID: "A-CHAOS"}, "package main\\n// ok", true)
-	if err != nil {
-		t.Fatalf("expected success, got error: %v", err)
+	vuln := domain.Vulnerability{ID: "A-CHAOS"}
+	state, err := re.ExecuteRemediationLoop(ctx, vuln, "package main\n// ok", true)
+	if err == nil {
+		t.Fatalf("expected error")
 	}
-	if state.Status != "remediated_with_chaos" {
-		t.Fatalf("unexpected status: %q", state.Status)
+	if state == nil || state.CurrentPhase != "ROLLED_BACK" {
+		t.Fatalf("unexpected state: %#v", state)
 	}
 }
