@@ -1,0 +1,34 @@
+﻿name: Production CI/CD IaC Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate_and_test:
+    name: Core System Verification Gauntlet
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Initialize Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+          cache-dependency-path: |
+            **/go.mod
+
+      - name: Format Check
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Run 'go fmt ./...'"
+            exit 1
+          fi
+
+      - name: Execute E2E & Chaos Tests
+        run: go test -v ./...
