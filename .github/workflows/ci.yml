@@ -1,0 +1,36 @@
+﻿name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run Go Unit & E2E Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go Runtime
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+
+      - name: Verify Code Formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files are not formatted cleanly with 'go fmt':"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Download & Verify Dependencies
+        run: go mod tidy
+
+      - name: Execute Full Test Suite
+        run: go test -v ./...
