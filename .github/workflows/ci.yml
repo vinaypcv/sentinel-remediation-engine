@@ -1,4 +1,4 @@
-﻿name: CI Pipeline
+name: CI Pipeline
 
 on:
   push:
@@ -33,4 +33,4 @@ jobs:
         run: go mod tidy
 
       - name: Execute Full Test Suite
-        run: go test -v ./...
+        run: go test -v ./...\n
