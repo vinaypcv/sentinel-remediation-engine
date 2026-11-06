@@ -56,16 +56,25 @@ func TestEndToEnd_HolisticSecurityPipeline(t *testing.T) {
 	// 3. Stream event into buffer workspace
 	buffer.IngestStream(ctx, telemetryAlert)
 
-	// Allow async execution routine to commit state logs to disk
-	time.Sleep(50 * time.Millisecond)
+	// 4. Verify system state written to the immutable ledger (poll to avoid CI flakiness)
+	deadline := time.Now().Add(2 * time.Second)
+	var lastData string
 
-	// 4. Verify system state written to the immutable ledger
-	data, err := os.ReadFile(ledgerFile)
-	if err != nil {
-		t.Fatalf("Failed to read persistent audit logs: %v", err)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(ledgerFile)
+		if readErr == nil {
+			lastData = string(data)
+			if strings.Contains(lastData, "TX-7709") {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	if !strings.Contains(string(data), "TX-7709") {
-		t.Errorf("Holistic verification failed: Log record not securely committed to the write-ahead ledger.")
+	if lastData == "" {
+		t.Fatalf("Holistic verification failed: no ledger data written before timeout")
+	}
+	if !strings.Contains(lastData, "TX-7709") {
+		t.Fatalf("Holistic verification failed: expected TX-7709 in ledger; got: %s", lastData)
 	}
 }
