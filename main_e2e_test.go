@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,22 +15,39 @@ import (
 )
 
 type MockWrapper struct {
-	Engine *workflow.RemediationEngine
-	Ledger *storage.ImmutableLedger
+	Engine    *workflow.RemediationEngine
+	Generator workflow.PatchGenerator
+	Verifier  *testPatchVerifier
+	Ledger    *storage.ImmutableLedger
 }
 
 func (mw *MockWrapper) ProcessAlert(ctx context.Context, vuln domain.Vulnerability) (*domain.AgentState, error) {
-	mockPatch := "package main\n// Auto-remediated security configuration dependency map"
-	state, err := mw.Engine.ExecuteRemediationLoop(ctx, vuln, mockPatch, false)
-	if err == nil {
-		_ = mw.Ledger.CommitStateToLedger(ctx, state)
+	state, err := mw.Engine.ExecuteGeneratedRemediation(ctx, vuln, mw.Generator, mw.Verifier)
+	if state != nil {
+		if ledgerErr := mw.Ledger.CommitStateToLedger(ctx, state); ledgerErr != nil {
+			return state, ledgerErr
+		}
 	}
 	return state, err
 }
 
+type testPatchVerifier struct {
+	patch workflow.GeneratedPatch
+}
+
+func (v *testPatchVerifier) Verify(_ context.Context, patch workflow.GeneratedPatch) error {
+	v.patch = patch
+	return nil
+}
+
 func TestEndToEnd_HolisticSecurityPipeline(t *testing.T) {
 	ctx := context.Background()
-	ledgerFile := "twitch_security_audit.log"
+	root := t.TempDir()
+	goMod := "module example.test/fixture\n\ngo 1.26.0\n\nrequire example.com/library v1.2.3\n"
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ledgerFile := filepath.Join(root, "audit.log")
 
 	vController := controller.NewVerificationController()
 	rEngine := workflow.NewRemediationEngine(vController)
@@ -39,10 +57,15 @@ func TestEndToEnd_HolisticSecurityPipeline(t *testing.T) {
 	}
 	defer func() {
 		_ = ledger.Close()
-		_ = os.Remove(ledgerFile)
 	}()
 
-	wrapper := &MockWrapper{Engine: rEngine, Ledger: ledger}
+	verifier := &testPatchVerifier{}
+	wrapper := &MockWrapper{
+		Engine:    rEngine,
+		Generator: workflow.GoModPatchGenerator{WorkspaceRoot: root},
+		Verifier:  verifier,
+		Ledger:    ledger,
+	}
 	buffer := storage.NewTelemetryBuffer(wrapper)
 
 	telemetryAlert := storage.SecurityTelemetryEvent{
@@ -50,29 +73,23 @@ func TestEndToEnd_HolisticSecurityPipeline(t *testing.T) {
 		AWSAccountID: "112233445566",
 		Microservice: "video-ingest-api",
 		Payload:      "CRITICAL_DEPENDENCY_ALERT: remote execution vulnerability detected inside vendor parsing library",
+		Dependency:   "example.com/library",
+		FixedVersion: "v1.3.0",
 		Timestamp:    time.Now(),
 	}
 
-	buffer.IngestStream(ctx, telemetryAlert)
-
-	deadline := time.Now().Add(2 * time.Second)
-	var lastData string
-
-	for time.Now().Before(deadline) {
-		data, readErr := os.ReadFile(ledgerFile)
-		if readErr == nil {
-			lastData = string(data)
-			if strings.Contains(lastData, "TX-7709") {
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
+	if err := buffer.ProcessEvent(ctx, telemetryAlert); err != nil {
+		t.Fatalf("process telemetry event: %v", err)
 	}
 
-	if lastData == "" {
-		t.Fatalf("Holistic verification failed: no ledger data written before timeout")
+	data, err := os.ReadFile(ledgerFile)
+	if err != nil {
+		t.Fatalf("read audit ledger: %v", err)
 	}
-	if !strings.Contains(lastData, "TX-7709") {
-		t.Fatalf("Holistic verification failed: expected TX-7709 in ledger; got: %s", lastData)
+	if !strings.Contains(string(data), "TX-7709") {
+		t.Fatalf("Holistic verification failed: expected TX-7709 in ledger; got: %s", data)
+	}
+	if verifier.patch.RelativePath != "go.mod" || !strings.Contains(string(verifier.patch.Content), "example.com/library v1.3.0") {
+		t.Fatalf("expected generated dependency patch to be sandbox-verified, got: %+v", verifier.patch)
 	}
 }

@@ -26,3 +26,14 @@ twitch_security_audit.log
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Go local caches (Codex sandbox uses workspace caches)
+.gocache/
+.gotmp/
+
+# Local JSONL delivery and audit state
+*.jsonl
+
+# AWS CDK synthesis and deployment output
+cdk.out/
+cdk/cdk-outputs.json

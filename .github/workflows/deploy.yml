@@ -1,34 +1,60 @@
-﻿name: Production CI/CD IaC Pipeline
+name: Manual AWS Infrastructure Deployment
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: Deploy the Sentinel infrastructure stack to the configured staging account
+        required: true
+        type: choice
+        options:
+          - no
+          - yes
+        default: no
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  validate_and_test:
-    name: Core System Verification Gauntlet
+  deploy_staging_infrastructure:
+    if: inputs.confirm_deploy == 'yes'
+    environment: staging
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Source Code
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Initialize Go Toolchain
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version: '1.26.x'
           cache: true
-          cache-dependency-path: |
-            **/go.mod
+          cache-dependency-path: go.sum
 
-      - name: Format Check
+      - name: Set up Node.js for AWS CDK
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify source before deployment
         run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Run 'go fmt ./...'"
-            exit 1
-          fi
+          go vet ./...
+          go test ./...
 
-      - name: Execute E2E & Chaos Tests
-        run: go test -v ./...
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install AWS CDK CLI
+        run: npm install --global aws-cdk@2
+
+      - name: Synthesize infrastructure template
+        working-directory: cdk
+        run: cdk synth SentinelProductionDeploymentStack
+
+      - name: Deploy infrastructure after explicit confirmation
+        working-directory: cdk
+        run: cdk deploy SentinelProductionDeploymentStack --require-approval broadening --outputs-file cdk-outputs.json

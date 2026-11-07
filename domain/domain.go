@@ -4,12 +4,14 @@ import "context"
 
 // Vulnerability represents an ingested security flaw or compliance risk.
 type Vulnerability struct {
-	ID          string   `json:"id"`
-	Service     string   `json:"service"`
-	TargetFile  string   `json:"target_file"`
-	RiskScore   float64  `json:"risk_score"`
-	Description string   `json:"description"`
-	Invariants  []string `json:"invariants"` // e.g., "PRESERVE_MEDIA_INGESTION_FLOW"
+	ID           string   `json:"id"`
+	Service      string   `json:"service"`
+	TargetFile   string   `json:"target_file"`
+	Dependency   string   `json:"dependency,omitempty"`
+	FixedVersion string   `json:"fixed_version,omitempty"`
+	RiskScore    float64  `json:"risk_score"`
+	Description  string   `json:"description"`
+	Invariants   []string `json:"invariants"` // e.g., "PRESERVE_MEDIA_INGESTION_FLOW"
 }
 
 // AgentState tracks the cognitive lifecycle and rollback markers of the remediation engine.
